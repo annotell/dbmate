@@ -4,11 +4,25 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    ignore:
-      - dependency-name: golang
-        versions: ["*rc*"]
+    groups:
+      docker:
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      gha:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      golang:
+        patterns:
+          - "*"
