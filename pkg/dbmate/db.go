@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/amacneil/dbmate/v2/pkg/dbutil"
@@ -19,16 +20,17 @@ import (
 
 // Error codes
 var (
-	ErrNoMigrationFiles      = errors.New("no migration files found")
-	ErrInvalidURL            = errors.New("invalid url, have you set your --url flag or DATABASE_URL environment variable?")
-	ErrNoRollback            = errors.New("can't rollback: no migrations have been applied")
-	ErrCantConnect           = errors.New("unable to connect to database")
-	ErrUnsupportedDriver     = errors.New("unsupported driver")
-	ErrNoMigrationName       = errors.New("please specify a name for the new migration")
-	ErrMigrationAlreadyExist = errors.New("file already exists")
-	ErrMigrationDirNotFound  = errors.New("could not find migrations directory")
-	ErrMigrationNotFound     = errors.New("can't find migration file")
-	ErrCreateDirectory       = errors.New("unable to create directory")
+	ErrNoMigrationFiles         = errors.New("no migration files found")
+	ErrInvalidURL               = errors.New("invalid url, have you set your --url flag or DATABASE_URL environment variable?")
+	ErrNoRollback               = errors.New("can't rollback: no migrations have been applied")
+	ErrCantConnect              = errors.New("unable to connect to database")
+	ErrUnsupportedDriver        = errors.New("unsupported driver")
+	ErrNoMigrationName          = errors.New("please specify a name for the new migration")
+	ErrMigrationAlreadyExist    = errors.New("file already exists")
+	ErrMigrationDirNotFound     = errors.New("could not find migrations directory")
+	ErrMigrationNotFound        = errors.New("can't find migration file")
+	ErrCreateDirectory          = errors.New("unable to create directory")
+	ErrSetRoleWithNoTransaction = errors.New("--set-role cannot be used with non-transactional migrations")
 )
 
 // migrationFileRegexp pattern for valid migration files
@@ -379,6 +381,26 @@ func (db *DB) Migrate() error {
 		)
 	}
 
+	// Check for incompatible non-transactional migrations when using --set-role
+	if db.DatabaseRole != nil {
+		var incompatible []string
+		for _, migration := range pendingMigrations {
+			parsed, err := migration.Parse()
+			if err != nil {
+				return err
+			}
+			for _, section := range parsed {
+				if !section.UpOptions.Transaction() {
+					incompatible = append(incompatible, migration.FileName)
+					break
+				}
+			}
+		}
+		if len(incompatible) > 0 {
+			return fmt.Errorf("%w: %s", ErrSetRoleWithNoTransaction, strings.Join(incompatible, ", "))
+		}
+	}
+
 	sqlDB, err := db.openDatabaseForMigration(drv)
 	if err != nil {
 		return err
@@ -397,6 +419,10 @@ func (db *DB) Migrate() error {
 
 		for _, migrationSection := range parsed {
 			execMigration := func(tx dbutil.Transaction) error {
+				if err := drv.PrepareTransaction(tx); err != nil {
+					return err
+				}
+
 				// run actual migration
 				result, err := tx.Exec(migrationSection.Up)
 				if err != nil {
@@ -566,8 +592,21 @@ func (db *DB) Rollback() error {
 		return err
 	}
 
+	// Check for incompatible non-transactional rollback when using --set-role
+	if db.DatabaseRole != nil {
+		for _, section := range parsedSections {
+			if !section.DownOptions.Transaction() {
+				return fmt.Errorf("%w: %s", ErrSetRoleWithNoTransaction, latest.FileName)
+			}
+		}
+	}
+
 	for _, migrationSection := range parsedSections {
 		execMigration := func(tx dbutil.Transaction) error {
+			if err := drv.PrepareTransaction(tx); err != nil {
+				return err
+			}
+
 			// rollback migration
 			result, err := tx.Exec(migrationSection.Down)
 			if err != nil {
