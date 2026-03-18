@@ -101,6 +101,11 @@ func NewApp() *cli.App {
 			Usage:   "timeout for --wait flag",
 			Value:   defaultDB.WaitTimeout,
 		},
+		&cli.StringFlag{
+			Name:    "set-role",
+			EnvVars: []string{"DBMATE_SET_ROLE"},
+			Usage:   "set role for all database operations",
+		},
 	}
 
 	app.Commands = []*cli.Command{
@@ -320,6 +325,9 @@ func configureDB(c *cli.Context) (*dbmate.DB, error) {
 	db.MigrationsTableName = c.String("migrations-table")
 	db.SchemaFile = c.String("schema-file")
 	db.WaitBefore = c.Bool("wait")
+	if setRole := c.String("set-role"); setRole != "" {
+		db.DatabaseRole = &setRole
+	}
 	waitTimeout := c.Duration("wait-timeout")
 	if waitTimeout != 0 {
 		db.WaitTimeout = waitTimeout
